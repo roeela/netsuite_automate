@@ -1,6 +1,10 @@
 import asyncio
 from playwright.async_api import async_playwright
 
+
+from datetime import datetime
+
+
 async def run():
     user_data_dir = r"G:\Toee\netsuite_automate\browsing_profile"
     landing_page_url = "https://ibase1.sharepoint.com/sites/hub/il/SitePages/New-Hire-Checklist.aspx"
@@ -30,10 +34,12 @@ async def run():
         # Navigate inside netsuite
         # goto "track time"
         await page_netsuite.get_by_role("link", name="Track Time").click()
-        # open the date picker
-        await page_netsuite.get_by_role("link", name="Pick").click()
-        # select 31st of the current month
-        await page_netsuite.get_by_role("link", name="31").nth(1).click()
+
+        # test some dates
+        example_dates = [datetime(2025, 7, 23), datetime(2025, 8, 15), datetime(2025, 9, 27)]
+        for sample_date in example_dates:
+            date_str = sample_date.strftime("%d/%m/%Y")
+            await page_netsuite.get_by_role("textbox", name="Date *").fill(date_str)
 
         # Timesheet entry opens in a new popup
         popup_task2 = context.wait_for_event("page")
