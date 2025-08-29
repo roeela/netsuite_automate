@@ -1,0 +1,3 @@
+
+
+python -m playwright codegen --user-data-dir="G:\Toee\netsuite_automate\browsing_profile" https://ibase1.sharepoint.com/sites/hub/il/SitePages/New-Hire-Checklist.aspx
