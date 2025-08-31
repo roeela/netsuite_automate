@@ -5,7 +5,7 @@ from datetime import datetime
 from enum import Enum
 import logging
 import pandas as pd
-from typing import Optional, Dict, List, Any
+from typing import Optional, Dict, List, Any, Tuple
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -123,19 +123,20 @@ class NetsuiteAutomator:
             logger.error(f"Error navigating to Track Time: {e}")
             raise
 
-    async def parse_timesheet_table(self) -> Optional[pd.DataFrame]:
+    async def parse_timesheet_table(self) -> Optional[Dict[str, Tuple[str, Any]]]:
         """
-        Parse the timesheet table on the Track Time page into a pandas DataFrame.
+        Parse the timesheet table on the Track Time page into a dictionary of time entries.
         
         Returns:
-            pd.DataFrame with columns: customer_project, task, service_item, 
-            plus date columns (e.g., 'sun_24', 'mon_25', etc.), and total
+            Dict with date column names as keys (e.g., 'sun_24', 'tue_26') and 
+            tuples of (time_text, link_locator) as values. Only includes entries where time was found.
+            Example: {'sun_24': ('9:30', <playwright_locator>), 'mon_25': ('8:00', <playwright_locator>)}
         """
         try:
             if not self.page_netsuite:
                 raise Exception("NetSuite page not initialized. Call start() first.")
             
-            logger.info("Parsing timesheet table...")
+            logger.info("Parsing timesheet table for time entries and links...")
             
             # Wait for the timesheet table to be present
             table_selector = "#timesheet_splits"
@@ -149,46 +150,40 @@ class NetsuiteAutomator:
                 logger.warning("Timesheet table not found")
                 return None
             
-            # Extract table HTML for parsing
-            table_html = await table.inner_html()
-            
-            # Parse the table structure
-            data_rows = []
-            
             # Get all rows
             rows = table.locator("tr")
             row_count = await rows.count()
+            
+            if row_count < 2:  # No data rows
+                logger.info("No data rows found in timesheet table")
+                return {}
             
             # Parse header row to get date columns
             header_row = rows.nth(0)
             header_cells = header_row.locator("td")
             header_count = await header_cells.count()
             
-            column_names = []
-            date_columns = []
+            # Map column indices to date column names
+            date_column_mapping = {}  # index -> column_name
             
             for i in range(header_count):
                 cell = header_cells.nth(i)
                 cell_text = await cell.inner_text()
                 cell_text = cell_text.strip()
                 
-                if i == 0:
-                    column_names.append("customer_project")
-                elif i == 1:
-                    column_names.append("task")
-                elif i == 2:
-                    column_names.append("service_item")
-                elif "Total" in cell_text:
-                    column_names.append("total")
-                else:
-                    # This is a date column (e.g., "Sun, 24")
-                    # Clean up the text to create a column name
-                    clean_name = re.sub(r'[^\w\s]', '', cell_text.lower().replace(' ', '_'))
-                    column_names.append(clean_name)
-                    date_columns.append(clean_name)
+                # Skip non-date columns (customer, task, service_item, total)
+                if i < 3 or "Total" in cell_text:
+                    continue
+                
+                # This is a date column (e.g., "Sun, 24")
+                # Clean up the text to create a column name
+                clean_name = re.sub(r'[^\w\s]', '', cell_text.lower().replace(' ', '_'))
+                date_column_mapping[i] = clean_name
             
-            logger.info(f"Found columns: {column_names}")
-            logger.info(f"Date columns: {date_columns}")
+            logger.info(f"Found date columns: {list(date_column_mapping.values())}")
+            
+            # Dictionary to store the results
+            time_entries = {}
             
             # Parse data rows (skip header and totals rows)
             for row_idx in range(1, row_count):
@@ -204,47 +199,38 @@ class NetsuiteAutomator:
                 if not first_cell_text or "Totals" in first_cell_text:
                     continue
                 
-                # Parse this data row
-                row_data = {}
-                
-                for cell_idx in range(min(cell_count, len(column_names))):
-                    cell = cells.nth(cell_idx)
+                # Process date columns for this row
+                for col_idx, column_name in date_column_mapping.items():
+                    if col_idx >= cell_count:
+                        continue
+                    
+                    cell = cells.nth(col_idx)
                     cell_text = await cell.inner_text()
                     cell_text = cell_text.strip()
                     
-                    # Clean up the text - remove extra whitespace and newlines
-                    cell_text = re.sub(r'\s+', ' ', cell_text)
-                    
-                    # For time columns, extract just the time value (e.g., "9:30" from links)
-                    if column_names[cell_idx] in date_columns or column_names[cell_idx] == "total":
-                        # Extract time pattern (H:MM or HH:MM)
-                        time_match = re.search(r'\d{1,2}:\d{2}', cell_text)
-                        if time_match:
-                            cell_text = time_match.group()
+                    # Check if there's a time entry in this cell
+                    time_match = re.search(r'\d{1,2}:\d{2}', cell_text)
+                    if time_match and time_match.group() != "0:00":
+                        time_text = time_match.group()
+                        
+                        # Look for a link in this cell
+                        link = cell.locator("a")
+                        if await link.count() > 0:
+                            # Store the time text and link locator
+                            time_entries[column_name] = (time_text, link.first)
+                            logger.info(f"Found time entry: {column_name} -> {time_text} with link")
                         else:
-                            # If no time found, it's likely empty - use "0:00"
-                            cell_text = "0:00" if cell_text == "" or cell_text == "&nbsp;" else cell_text
-                    
-                    row_data[column_names[cell_idx]] = cell_text
-                
-                # Only add rows that have meaningful data
-                if row_data.get("customer_project") and row_data["customer_project"] != "&nbsp;":
-                    data_rows.append(row_data)
+                            # Time found but no link - still store it with None as link
+                            time_entries[column_name] = (time_text, None)
+                            logger.info(f"Found time entry: {column_name} -> {time_text} (no link)")
             
-            # Create DataFrame
-            if data_rows:
-                df = pd.DataFrame(data_rows)
-                logger.info(f"Successfully parsed timesheet table with {len(df)} entries")
-                logger.info(f"DataFrame shape: {df.shape}")
-                logger.info(f"DataFrame columns: {list(df.columns)}")
-                return df
-            else:
-                logger.warning("No data rows found in timesheet table")
-                return pd.DataFrame()  # Return empty DataFrame
-                
+            logger.info(f"Successfully parsed {len(time_entries)} time entries from timesheet table")
+            return time_entries
+            
         except Exception as e:
             logger.error(f"Error parsing timesheet table: {e}")
             raise
+
 
     def _parse_time_to_hours(self, time_str: str) -> float:
         """
@@ -270,51 +256,6 @@ class NetsuiteAutomator:
         except Exception as e:
             logger.warning(f"Error parsing time string '{time_str}': {e}")
             return 0.0
-
-    def analyze_timesheet_data(self, df: pd.DataFrame) -> Dict[str, Any]:
-        """
-        Analyze the parsed timesheet data and return insights.
-        
-        Args:
-            df: DataFrame from parse_timesheet_table()
-            
-        Returns:
-            Dictionary with analysis results
-        """
-        try:
-            if df.empty:
-                return {"status": "empty", "message": "No timesheet data to analyze"}
-            
-            analysis = {
-                "total_entries": len(df),
-                "projects": df["customer_project"].unique().tolist() if "customer_project" in df.columns else [],
-                "tasks": df["task"].unique().tolist() if "task" in df.columns else [],
-            }
-            
-            # Find date columns (excluding metadata columns)
-            metadata_cols = {"customer_project", "task", "service_item", "total"}
-            date_cols = [col for col in df.columns if col not in metadata_cols]
-            
-            if date_cols:
-                analysis["date_columns"] = date_cols
-                
-                # Calculate total hours per day
-                daily_totals = {}
-                for date_col in date_cols:
-                    if date_col in df.columns:
-                        total_hours = sum(self._parse_time_to_hours(time_str) 
-                                        for time_str in df[date_col].fillna("0:00"))
-                        daily_totals[date_col] = total_hours
-                
-                analysis["daily_totals"] = daily_totals
-                analysis["week_total_hours"] = sum(daily_totals.values())
-            
-            logger.info(f"Timesheet analysis completed: {analysis}")
-            return analysis
-            
-        except Exception as e:
-            logger.error(f"Error analyzing timesheet data: {e}")
-            return {"status": "error", "message": str(e)}
 
     async def _select_customer_and_case(self, day_type: DayType):
         """Select appropriate customer and case based on day type (private helper method)"""
@@ -369,52 +310,76 @@ class NetsuiteAutomator:
             logger.error(f"Error selecting customer and case for {day_type}: {e}")
             raise
 
+    async def fill_calculated_work_hours(self, total_hours: float):
+        # Calculate start and end times based on duration
+        start_hour = 7
+        start_minute = 30
+
+        # Convert duration to hours and minutes
+        end_total_minutes = start_minute + (total_hours * 60)
+        end_hour = start_hour + int(end_total_minutes // 60)
+        end_minute = int(end_total_minutes % 60)
+
+        start_time = f"{start_hour:02d}:{start_minute:02d}"
+        end_time = f"{end_hour:02d}:{end_minute:02d}"
+
+        # Open timesheet entry popup (either for new entry or to edit time for existing)
+
+        popup_task = self.context.wait_for_event("page")
+        await self.page_netsuite.get_by_role("link", name="Calculate").click()
+        page_timespan_entry = await popup_task
+        logger.info("Opened timesheet entry popup")
+
+        # Fill in the time fields
+        await page_timespan_entry.get_by_role("textbox", name="Start Time").fill(start_time)
+        await page_timespan_entry.get_by_role("textbox", name="End Time").fill(end_time)
+
+        logger.info(f"Filled start={start_time}, end={end_time}")
+        await page_timespan_entry.get_by_role("textbox", name="Start Time").fill(start_time)
+        await page_timespan_entry.get_by_role("textbox", name="Start Time").press("Tab")
+        await page_timespan_entry.get_by_role("textbox", name="End time").fill(end_time)
+        await page_timespan_entry.get_by_role("textbox", name="End time").press("Tab")
+        logger.info(f"Filled time: {start_time} - {end_time} ({total_hours} hours)")
+        
+        # Save and close the popup
+        await page_timespan_entry.get_by_role("button", name="Save").click()
+        await page_timespan_entry.close()
+        logger.info("Saved and closed timesheet entry popup")
+    
+    def _compute_date_key(self, date_obj: datetime) -> str:
+        """Compute the date column key used in the timesheet table from a datetime object"""
+        day_abbr = date_obj.strftime("%a").lower()
+        day_num = date_obj.day
+        return f"{day_abbr}_{day_num}"
+    
     async def process_date(self, date_obj: datetime, duration_hours: float, day_type: DayType = DayType.Work, use_save: bool = True):
-        """Process a single date entry (private method)"""
+        """Process a single date entry"""
         page_timespan_entry = None
         try:
             date_str = date_obj.strftime("%d/%m/%Y")
             logger.info(f"Processing date: {date_str} for {duration_hours} hours, type: {day_type}")
             
-            # Calculate start and end times based on duration
-            # Default start time is 07:30, calculate end time based on duration
-            start_hour = 7
-            start_minute = 30
-            
-            # Convert duration to hours and minutes
-            end_total_minutes = start_minute + (duration_hours * 60)
-            end_hour = start_hour + int(end_total_minutes // 60)
-            end_minute = int(end_total_minutes % 60)
-            
-            start_time = f"{start_hour:02d}:{start_minute:02d}"
-            end_time = f"{end_hour:02d}:{end_minute:02d}"
-            
-            # Fill the date field
+            # Fill the date field - this will update the table to show the week containing this date
             await self.page_netsuite.get_by_role("textbox", name="Date *").fill(date_str)
             logger.info(f"Filled date: {date_str}")
-            
-            # Open timesheet entry popup
-            popup_task = self.context.wait_for_event("page")
-            await self.page_netsuite.get_by_role("link", name="Calculate").click()
-            page_timespan_entry = await popup_task
-            logger.info("Opened timesheet entry popup")
-            
-            # Fill in the time fields
-            await page_timespan_entry.get_by_role("textbox", name="Start Time").click()
-            await page_timespan_entry.get_by_role("textbox", name="Start Time").fill(start_time)
-            await page_timespan_entry.get_by_role("textbox", name="Start Time").press("Tab")
-            await page_timespan_entry.get_by_role("textbox", name="End time").fill(end_time)
-            await page_timespan_entry.get_by_role("textbox", name="End time").press("Tab")
-            logger.info(f"Filled time: {start_time} - {end_time} ({duration_hours} hours)")
-            
-            # Save and close the popup
-            await page_timespan_entry.get_by_role("button", name="Save").click()
-            await page_timespan_entry.close()
-            logger.info("Saved and closed timesheet entry popup")
-            
-            # Select customer and case based on day type
+            # wait for page to update
+            await self.page_netsuite.wait_for_timeout(2000)
+
+            timesheet_data = await self.parse_timesheet_table()
+
+            date_key = self._compute_date_key(date_obj)
+            if date_key in timesheet_data and timesheet_data[date_key][1] is not None:
+                time_text, link_locator = timesheet_data[date_key]
+                logger.info(f"Existing entry found for {date_key}: {time_text}")
+                # click the link
+                await link_locator.click()
+                logger.info(f"Clicked existing entry link for {date_key}")
+            else:
+                logger.info(f"No existing entry for {date_key}")
+
+            await self.fill_calculated_work_hours(duration_hours)
+                
             await self._select_customer_and_case(day_type)
-            
             logger.info(f"Completed processing for {date_str}")
             
         except Exception as e:
@@ -455,22 +420,23 @@ async def main():
         
         # Navigate to Track Time
         await automator.goto_track_time()
+
+        await automator.process_date(datetime(2025, 9, 3), 9.5, DayType.Work)
+        await automator.process_date(datetime(2025, 9, 3), 11.5, DayType.Sick)
+        await automator.process_date(datetime(2025, 9, 4), 11.5, DayType.ReserveDuty)
+
+
+
         
-        # Parse and analyze existing timesheet data
-        logger.info("Parsing existing timesheet data...")
-        df = await automator.parse_timesheet_table()
+        # # Parse existing timesheet data
+        # logger.info("Parsing existing timesheet data...")
+        # df = await automator.parse_timesheet_table()
         
-        if df is not None and not df.empty:
-            print("\n=== TIMESHEET DATA ===")
-            print(df.to_string(index=False))
-            
-            # Analyze the data
-            analysis = automator.analyze_timesheet_data(df)
-            print(f"\n=== ANALYSIS ===")
-            for key, value in analysis.items():
-                print(f"{key}: {value}")
-        else:
-            print("No timesheet data found or table is empty")
+        # if df is not None and not df.empty:
+        #     print("\n=== TIMESHEET DATA ===")
+        #     print(df.to_string(index=False))
+        # else:
+        #     print("No timesheet data found or table is empty")
         
         # Pause for inspection
         await automator.pause_for_inspection("Press ENTER to close...")
