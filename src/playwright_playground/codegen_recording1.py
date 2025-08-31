@@ -37,6 +37,14 @@ def run(playwright: Playwright) -> None:
     page1.locator("#btn_multibutton_submitter").click()
     page1.get_by_role("button", name="OK").click()
 
+    # this is how time entries are clicked
+    page1.get_by_role("cell", name=":30").nth(2).click()
+    page1.get_by_role("link", name=":30").nth(1).click()
+    page1.get_by_role("button", name="Go Back").click()
+    page1.get_by_role("link", name=":00").click()
+    page1.get_by_role("button", name="Go Back").click()
+
+
     # ---------------------
     context.close()
     browser.close()
