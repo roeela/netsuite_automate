@@ -1,4 +1,1 @@
-
-
-python -m playwright codegen --user-data-dir="G:\Toee\netsuite_automate\browsing_profile" https://ibase1.sharepoint.com/sites/hub/il
-python -m playwright codegen --user-data-dir="G:\Toee\netsuite_automate\browsing_profile" https://ibase1.sharepoint.com/sites/hub/il/SitePages/New-Hire-Checklist.aspx
+python -m playwright codegen --user-data-dir="C:\Users\roeel\AppData\Local\netsuite_automator\browser_profile" https://ibase1.sharepoint.com/sites/hub/il

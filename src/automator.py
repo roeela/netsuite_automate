@@ -2,7 +2,7 @@ import asyncio
 import re
 from playwright.async_api import async_playwright
 from datetime import datetime
-from enum import Enum
+from enum import Enum, auto
 import logging
 import pandas as pd
 from typing import Optional, Dict, List, Any, Tuple
@@ -25,6 +25,12 @@ class DayType(Enum):
     PublicHoliday = "PublicHoliday"
     ReserveDuty = "ReserveDuty"
     Vacation = "Vacation"
+
+
+class StagingType(Enum):
+    Test = auto()
+    Save = auto()
+    Submit = auto()
 
 
 class NetsuiteAutomator:
@@ -304,7 +310,7 @@ class NetsuiteAutomator:
         day_num = date_obj.day
         return f"{day_abbr}_{day_num}"
     
-    async def process_date(self, date_obj: datetime, duration_hours: float, day_type: DayType = DayType.Work, use_save: bool = True):
+    async def process_date(self, date_obj: datetime, duration_hours: float, day_type: DayType = DayType.Work, staging_type: StagingType = StagingType.Test):
         """Process a single date entry"""
         page = await self.navigator.go_to_page(PageState.TIME_TRACKING_PAGE)  
         page_timespan_entry = None
@@ -333,6 +339,16 @@ class NetsuiteAutomator:
             await self.fill_calculated_work_hours(duration_hours)
                 
             await self._select_customer_and_case(day_type)
+
+            if staging_type == StagingType.Submit:
+                logger.warning("Submitting the timesheet entry! this is irreversible!")
+                await page.locator("#savesubmit").click()
+            elif staging_type == StagingType.Save:
+                logger.info("Saving the timesheet entry")
+                await page.locator("#btn_multibutton_submitter").click()
+            else:
+                logger.info("Test mode - not saving or submitting the timesheet entry")
+
             logger.info(f"Completed processing for {date_str}")
             
         except Exception as e:
@@ -348,6 +364,9 @@ class NetsuiteAutomator:
     async def pause_for_inspection(self, message: str = "Press ENTER to continue..."):
         """Pause execution for manual inspection"""
         input(message)
+
+    async def goto_weekly_view(self):
+        page = await self.navigator.go_to_page(PageState.WEEKLY_SHEET_PAGE)
     
     async def close(self):
         """Close all browser resources"""
@@ -362,22 +381,3 @@ class NetsuiteAutomator:
             logger.error(f"Error during cleanup: {e}")
 
 
-async def main():
-    """Main function to run the automation"""
-    user_data_dir = r"G:\Toee\netsuite_automate\browsing_profile"
-    
-    # Use the automator as an async context manager
-    async with NetsuiteAutomator() as automator:
-        # Start and log in
-        await automator.start()
-        
-        await automator.process_date(datetime(2025, 9, 3), 9.5, DayType.Work)
-        await automator.process_date(datetime(2025, 9, 3), 11.5, DayType.Sick)
-        await automator.process_date(datetime(2025, 9, 4), 11.5, DayType.ReserveDuty)
-        # Pause for inspection
-        await automator.pause_for_inspection("Press ENTER to close...")
-
-
-# Run the async main function
-if __name__ == "__main__":
-    asyncio.run(main())
