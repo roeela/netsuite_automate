@@ -12,17 +12,17 @@ async def main():
         await automator.start()
         
         
-        await automator.process_date(datetime(2025, 9, 8), 9.5, DayType.Work)
-        # this is how to save
-        # await automator.process_date(datetime(2025, 9, 8), 9.5, DayType.Work, StagingType.Save)
-        # this is how to submit... be careful as this is irreversible
-        # await automator.process_date(datetime(2025, 9, 8), 9.5, DayType.Work, StagingType.Submit)
-        await automator.process_date(datetime(2025, 9, 10), 11.5, DayType.Sick)
-        await automator.process_date(datetime(2025, 9, 11), 11.5, DayType.ReserveDuty)
+        staging_type = StagingType.Test
+        # await automator.process_date(datetime(2025, 10, 5), 9.0, DayType.Vacation, staging_type)
+        await automator.process_date(datetime(2025, 10, 6), 4.5, DayType.PublicHoliday, staging_type)
+        # await automator.process_date(datetime(2025, 10, 7), 4.5, DayType.PublicHoliday, staging_type)
+        # await automator.process_date(datetime(2025, 10, 8), 9.0, DayType.Work, staging_type)
+        # await automator.process_date(datetime(2025, 10, 9), 9.0, DayType.Work, staging_type)
 
-        await automator.goto_weekly_view()
+        # await automator.goto_weekly_view()
         # Pause for inspection
         await automator.pause_for_inspection("Press ENTER to close...")
+
 
 
 # Run the async main function

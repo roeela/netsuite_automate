@@ -280,7 +280,8 @@ class NetsuiteAutomator:
 
         start_time = f"{start_hour:02d}:{start_minute:02d}"
         end_time = f"{end_hour:02d}:{end_minute:02d}"
-
+        if end_time == "12:00":
+            end_time = "12:00 pm" 
         # Open timesheet entry popup (either for new entry or to edit time for existing)
 
         popup_task = self.context.wait_for_event("page")
